@@ -75,12 +75,9 @@ rpserver_localizedemailaddress = ProtoField.string("everquest.rpserver.localized
 rpserver_unknown1 = ProtoField.bytes("everquest.rpserver.unknown1", "Unknown")
 rpserver_unknown2 = ProtoField.bytes("everquest.rpserver.unknown2", "Unknown")
 
-accessgranted_response = ProtoField.bool("everquest.access_granted.response", "Response")
-accessgranted_name = ProtoField.string("everquest.access_granted.name", "Name")
-
 expansion_expansions = ProtoField.uint32("everquest.expansions.expansions", "Expansions")
 
-eq_protocol.fields = {
+local fields = {
   flags, flag_unknown_bit_0, flag_has_ack_request, flag_is_closing, flag_is_fragment, flag_has_ack_counter,
   flag_is_first_packet, flag_is_closing_2, flag_is_sequence_end, flag_is_keep_alive_ack, flag_unknown_bit_9,
   flag_has_ack_response, flag_unknown_bit_11, flag_unknown_bit_12, flag_unknown_bit_13, flag_unknown_bit_14, flag_unknown_bit_15,
@@ -90,7 +87,7 @@ eq_protocol.fields = {
   rpserver_fv, rpserver_pvp, rpserver_auto_identify, rpserver_namegen, rpserver_gibberish, rpserver_testserver,
   rpserver_locale, rpserver_profanity_filter, rpserver_worldshortname, rpserver_loggingserverpassword,
   rpserver_loggingserveraddress, rpserver_loggingserverport, rpserver_localizedemailaddress, rpserver_unknown1,
-  rpserver_unknown2, accessgranted_response, accessgranted_name, expansion_expansions
+  rpserver_unknown2, expansion_expansions,
 }
 
 function eq_protocol.dissector(buffer, pinfo, tree)
@@ -191,7 +188,7 @@ function eq_protocol.dissector(buffer, pinfo, tree)
   local opcode_data = nil
   if bytes_remaining > 0 and has_opcode then
     opcode_value = buffer(header_offset, 2):uint()
-    opcode_data = OPCODE_TABLE[opcode_value]
+    opcode_data = OPCODES[opcode_value]
 
     if opcode_data then
       pinfo.cols.info = "[" .. opcode_data.name .. "] " .. tostring(pinfo.cols['info'])
@@ -214,7 +211,7 @@ function add_payload(subtree, buffer, opcode_data)
     subtree:add(payload, buffer)
   else
     local payload_subtree = subtree:add(eq_protocol, buffer, opcode_data.name)
-    opcode_data.dissect(payload_subtree, buffer)
+    opcode_data:dissect(payload_subtree, buffer)
   end
 end
 
@@ -232,11 +229,7 @@ local function dissect_string(field)
   end
 end
 
-local udp_port = DissectorTable.get("udp.port")
-udp_port:add(5998, eq_protocol)
-udp_port:add(9000, eq_protocol)
-
-OPCODE_TABLE = {
+OPCODES = {
   -- Opcodes with dissect handlers
   [0x0180] = {
     name ="MSG_SELECT_CHARACTER",
@@ -244,9 +237,13 @@ OPCODE_TABLE = {
   },
   [0x0710] = {
     name ="MSG_ACCESS_GRANTED",
-    dissect = function(tree, buffer)
-      tree:add(accessgranted_response, buffer(0, 1))
-      add_string(tree, accessgranted_name, buffer(1, 64))
+    f = {
+      response = ProtoField.bool("everquest.access_granted.response", "Response"),
+      name = ProtoField.string("everquest.access_granted.name", "Name"),
+    },
+    dissect = function(self, tree, buffer)
+      tree:add(self.f.response, buffer(0, 1))
+      add_string(tree, self.f.name, buffer(1, 64))
     end
   },
   [0x5818] = {
@@ -2279,3 +2276,14 @@ OPCODE_TABLE = {
     name ="MSG_ZSERVER_STATUS",
   },
 }
+
+for _, opcode in pairs(OPCODES) do
+  for _, field in ipairs(opcode.f or {}) do
+    table.insert(fields, field)
+  end
+end
+eq_protocol.fields = fields
+
+local udp_port = DissectorTable.get("udp.port")
+udp_port:add(5998, eq_protocol)
+udp_port:add(9000, eq_protocol)
